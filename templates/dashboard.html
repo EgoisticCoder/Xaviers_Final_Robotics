@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Disaster AI — Mission Dashboard v3</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+:root {
+  --bg:#0d1117; --surface:#161b22; --border:#30363d;
+  --accent:#00d4ff; --danger:#ff4444; --warn:#ffaa00; --ok:#00cc66;
+  --text:#e6edf3; --muted:#8b949e;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',monospace;
+  font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── Header ── */
+#header{background:var(--surface);border-bottom:1px solid var(--border);
+  padding:6px 14px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+#header h1{font-size:14px;color:var(--accent);letter-spacing:2px}
+.badge{padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:1px}
+.badge-ok{background:#00cc6618;color:var(--ok);border:1px solid var(--ok)}
+.badge-warn{background:#ffaa0018;color:var(--warn);border:1px solid var(--warn)}
+.badge-danger{background:#ff444418;color:var(--danger);border:1px solid var(--danger)}
+#gps-display{color:var(--muted);font-size:10px;margin-left:auto}
+
+/* ── Main ── */
+#main{display:flex;flex:1;overflow:hidden}
+
+/* ── Sim panel ── */
+#sim-panel{width:58%;display:flex;flex-direction:column;border-right:1px solid var(--border);position:relative}
+#sim-toolbar{background:var(--surface);border-bottom:1px solid var(--border);
+  padding:5px 10px;display:flex;align-items:center;gap:7px;flex-shrink:0;flex-wrap:wrap}
+#sim-canvas{flex:1;display:block}
+
+/* ── Camera PiP ── */
+#cam-pip{
+  position:absolute;bottom:8px;right:8px;
+  width:280px;border:2px solid var(--accent);border-radius:8px;
+  background:#000;overflow:hidden;z-index:100;
+  box-shadow:0 0 20px rgba(0,212,255,0.3);
+  display:flex;flex-direction:column;
+}
+#cam-pip.hidden{display:none}
+#cam-pip-header{
+  background:var(--surface);padding:4px 8px;
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:10px;color:var(--accent);border-bottom:1px solid var(--border)
+}
+#cam-container{position:relative;width:100%;aspect-ratio:4/3}
+#cam-video{width:100%;height:100%;object-fit:cover;display:block}
+#cam-canvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#cam-status{
+  background:var(--surface);padding:3px 8px;font-size:10px;
+  color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+
+/* ── Map panel ── */
+#map-panel{width:42%;display:flex;flex-direction:column}
+#map-toolbar{background:var(--surface);border-bottom:1px solid var(--border);
+  padding:5px 10px;display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap}
+#leaflet-map{flex:1}
+
+/* ── Bottom ── */
+#bottom{height:155px;flex-shrink:0;background:var(--surface);
+  border-top:1px solid var(--border);display:flex}
+#controls-panel{width:58%;border-right:1px solid var(--border);
+  padding:8px 12px;display:flex;flex-direction:column;gap:6px}
+#detections-panel{flex:1;padding:8px 10px;overflow-y:auto}
+
+.det-item{display:flex;align-items:center;gap:6px;padding:2px 0;
+  border-bottom:1px solid var(--border);font-size:11px}
+.det-rank{font-size:9px;padding:1px 5px;border-radius:3px;font-weight:700}
+.rank-CRITICAL{background:#ff444433;color:#ff6666}
+.rank-HIGH{background:#ff880033;color:#ffaa44}
+.rank-MODERATE{background:#ffee0033;color:#ffee44}
+.rank-LOW{background:#00cc6633;color:#00ee88}
+.det-src{font-size:9px;color:var(--muted);margin-left:auto}
+
+/* ── Buttons ── */
+.btn{background:var(--surface);color:var(--text);border:1px solid var(--border);
+  padding:4px 10px;border-radius:5px;cursor:pointer;font-size:11px;transition:all .15s}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.active{background:var(--accent);color:#000;border-color:var(--accent)}
+.btn.danger{border-color:var(--danger)}
+.btn.danger:hover{background:var(--danger);color:#fff}
+.btn.rescue{background:linear-gradient(135deg,#ff4400,#ff8800);
+  border:none;color:#fff;font-weight:700;padding:5px 16px;font-size:12px}
+.btn.rescue:hover{filter:brightness(1.15)}
+.btn.cam-toggle{border-color:var(--accent);color:var(--accent);font-size:10px;padding:3px 8px}
+
+/* ── D-Pad ── */
+#dpad{display:grid;grid-template-columns:repeat(3,34px);gap:2px}
+#dpad .btn{width:34px;height:34px;padding:0;text-align:center;font-size:15px}
+
+/* ── Mode ── */
+#modes{display:flex;gap:5px;align-items:center}
+#modes span{color:var(--muted);font-size:10px}
+
+/* ── Tool buttons ── */
+.tool-btn{padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;
+  font-weight:600;border:2px solid transparent;transition:all .15s}
+.tool-btn.active{border-color:var(--accent) !important}
+.tool-debris{background:#44331133;color:#cc8833;border-color:#cc8833}
+.tool-hole{background:#22113322;color:#9944cc;border-color:#9944cc}
+.tool-bump{background:#11223322;color:#4488cc;border-color:#4488cc}
+.tool-victim{background:#33220022;color:#ffcc00;border-color:#ffcc00}
+.tool-checkpoint{background:#00332222;color:#00cc88;border-color:#00cc88}
+
+#status-line{color:var(--accent);font-size:10px}
+#groq-summary{color:var(--muted);font-style:italic;font-size:10px}
+label{color:var(--muted);font-size:10px}
+
+/* ── Detection sub-sections ── */
+.det-section{font-size:10px;color:var(--muted);margin:4px 0 2px;font-weight:600;
+  border-bottom:1px solid var(--border);padding-bottom:2px}
+
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div id="header">
+  <h1>⚡ DISASTER AI v3</h1>
+  <span id="zone-badge" class="badge badge-ok">ZONE: CLEAR</span>
+  <span id="groq-score" class="badge badge-ok" style="display:none">GROQ:—/10</span>
+  <span id="hf-status" class="badge badge-warn">HF:CHECKING</span>
+  <span id="fire-badge" class="badge badge-danger" style="display:none">🔥 FIRE/SMOKE</span>
+  <span id="gps-display">GPS: initializing...</span>
+  <span id="status-line">Ready</span>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+
+  <!-- 3D Simulation -->
+  <div id="sim-panel">
+    <div id="sim-toolbar">
+      <span style="color:var(--muted);font-size:10px">3D SIM</span>
+      <button class="btn" style="font-size:10px;padding:3px 8px" onclick="resetCar()">↺ Reset</button>
+      <button class="btn" style="font-size:10px;padding:3px 8px" onclick="toggleWireframe()">⬡ Wire</button>
+      <span style="margin-left:auto;font-size:10px;color:var(--muted)">WASD/Arrows to drive</span>
+      <button class="btn cam-toggle" id="cam-toggle-btn" onclick="toggleCamPip()">📷 Camera ON</button>
+    </div>
+    <canvas id="sim-canvas"></canvas>
+
+    <!-- Camera PiP -->
+    <div id="cam-pip">
+      <div id="cam-pip-header">
+        <span>📷 LIVE CAMERA + AI DETECTION</span>
+        <button onclick="toggleCamPip()"
+          style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px">✕</button>
+      </div>
+      <div id="cam-container">
+        <video id="cam-video" autoplay muted playsinline></video>
+        <canvas id="cam-canvas"></canvas>
+      </div>
+      <div id="cam-status">Initializing camera...</div>
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div id="map-panel">
+    <div id="map-toolbar">
+      <span style="color:var(--muted);font-size:10px">MAP — Click to place:</span>
+      <button class="tool-btn tool-debris active" onclick="setTool('debris')"     id="tool-debris">🪨 Debris</button>
+      <button class="tool-btn tool-hole"          onclick="setTool('hole')"       id="tool-hole">🕳 Hole</button>
+      <button class="tool-btn tool-bump"          onclick="setTool('bump')"       id="tool-bump">⛰ Bump</button>
+      <button class="tool-btn tool-victim"        onclick="setTool('victim')"     id="tool-victim">🧍 Victim</button>
+      <button class="tool-btn tool-checkpoint"    onclick="setTool('checkpoint')" id="tool-checkpoint">📍 Point</button>
+      <button class="btn danger" onclick="clearAllObjects()"
+        style="margin-left:auto;font-size:10px;padding:3px 8px">🗑 Clear</button>
+    </div>
+    <div id="leaflet-map"></div>
+  </div>
+</div>
+
+<!-- BOTTOM -->
+<div id="bottom">
+
+  <!-- Controls -->
+  <div id="controls-panel">
+    <div style="display:flex;gap:14px;align-items:flex-start">
+
+      <!-- D-Pad -->
+      <div id="dpad">
+        <div></div>
+        <button class="btn"
+          onmousedown="pressKey('ArrowUp')" onmouseup="releaseKey('ArrowUp')"
+          ontouchstart="pressKey('ArrowUp')" ontouchend="releaseKey('ArrowUp')">▲</button>
+        <div></div>
+        <button class="btn"
+          onmousedown="pressKey('ArrowLeft')" onmouseup="releaseKey('ArrowLeft')"
+          ontouchstart="pressKey('ArrowLeft')" ontouchend="releaseKey('ArrowLeft')">◀</button>
+        <button class="btn" onclick="stopCar()">■</button>
+        <button class="btn"
+          onmousedown="pressKey('ArrowRight')" onmouseup="releaseKey('ArrowRight')"
+          ontouchstart="pressKey('ArrowRight')" ontouchend="releaseKey('ArrowRight')">▶</button>
+        <div></div>
+        <button class="btn"
+          onmousedown="pressKey('ArrowDown')" onmouseup="releaseKey('ArrowDown')"
+          ontouchstart="pressKey('ArrowDown')" ontouchend="releaseKey('ArrowDown')">▼</button>
+        <div></div>
+      </div>
+
+      <!-- Mode + Rescue -->
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div id="modes">
+          <span>Mode:</span>
+          <button class="btn active" id="mode-manual"  onclick="setMode('manual')">Manual</button>
+          <button class="btn"        id="mode-auto"    onclick="setMode('auto')">Auto</button>
+          <button class="btn"        id="mode-explore" onclick="setMode('explore')">Explore</button>
+        </div>
+        <button class="btn rescue" onclick="startRescue()">🚨 START RESCUE</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <label>Speed:</label>
+          <input type="range" id="speed-slider" min="1" max="10" value="5"
+            style="width:70px" oninput="setSpeed(this.value)"/>
+          <span id="speed-val" style="color:var(--accent)">5</span>
+          <label style="margin-left:6px">AI:</label>
+          <input type="checkbox" id="ai-scan" checked/>
+          <label>Verify:</label>
+          <input type="checkbox" id="do-verify" checked/>
+        </div>
+      </div>
+
+      <!-- Info -->
+      <div style="flex:1;font-size:10px;color:var(--muted)">
+        <div id="groq-summary">Groq verification ready</div>
+        <div id="path-info" style="margin-top:3px"></div>
+        <div id="scan-info" style="margin-top:3px"></div>
+        <div id="critical-findings" style="margin-top:3px;color:var(--warn)"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detections panel -->
+  <div id="detections-panel">
+    <div style="color:var(--muted);font-size:10px;margin-bottom:4px;font-weight:600">
+      AI DETECTIONS
+    </div>
+    <div id="det-list"><span style="color:var(--muted)">No detections yet</span></div>
+  </div>
+</div>
+
+<!-- ═══ JAVASCRIPT ═══ -->
+<script>
+// ════════════════════════════════
+// STATE
+// ════════════════════════════════
+const S = {
+  rover:   { lat:null, lng:null, heading:0, speed:5, mode:'manual' },
+  gps:     { origin:null },
+  keys:    {},
+  tool:    'debris',
+  objects: {},
+  path:    [],
+  pathIdx: 0,
+  exploreTimer: 0,
+  exploreDir:   1,
+  lastScanTime: 0,
+  scanInterval: 3500,
+  lastResult:   null,
+  wireframe:    false,
+  camActive:    true,
+  lastBoxes:    [],    // latest bounding boxes for canvas overlay
+};
+
+const DEFAULT_LAT = 22.5726, DEFAULT_LNG = 88.3639;
+
+// ════════════════════════════════
+// GPS
+// ════════════════════════════════
+function setOrigin(lat, lng) {
+  S.gps.origin = { lat, lng };
+  S.rover.lat  = lat;
+  S.rover.lng  = lng;
+}
+
+function initGPS() {
+  setOrigin(DEFAULT_LAT, DEFAULT_LNG);
+  if (!navigator.geolocation) {
+    document.getElementById('gps-display').textContent = 'GPS: Simulation';
+    return;
+  }
+  navigator.geolocation.watchPosition(pos => {
+    const { latitude:lat, longitude:lng } = pos.coords;
+    const first = S.gps.origin.lat === DEFAULT_LAT;
+    S.gps.origin = { lat, lng };
+    if (first && carGroup) {
+      carGroup.position.set(0,0,0);
+      S.rover.lat = lat; S.rover.lng = lng;
+      if (leafletMap) leafletMap.setView([lat,lng],17);
+    }
+    document.getElementById('gps-display').textContent =
+      `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  }, err => {
+    document.getElementById('gps-display').textContent = 'GPS: Simulation';
+  }, { enableHighAccuracy:true, maximumAge:2000 });
+}
+
+function gpsToScene(lat, lng) {
+  if (!S.gps.origin) return {x:0,z:0};
+  const R = 111320;
+  return {
+    x: (lng - S.gps.origin.lng) * R * Math.cos(S.gps.origin.lat * Math.PI/180),
+    z: -(lat - S.gps.origin.lat) * R,
+  };
+}
+
+function sceneToGPS(x, z) {
+  if (!S.gps.origin) return {lat:DEFAULT_LAT, lng:DEFAULT_LNG};
+  const R = 111320;
+  return {
+    lat: S.gps.origin.lat + (-z) / R,
+    lng: S.gps.origin.lng + x / (R * Math.cos(S.gps.origin.lat * Math.PI/180)),
+  };
+}
+
+// ════════════════════════════════
+// THREE.JS
+// ════════════════════════════════
+let scene, camera, renderer, carGroup, groundMesh, pathLine;
+let simObstacles = {}, simVictims = {};
+
+function initThree() {
+  const canvas = document.getElementById('sim-canvas');
+  const panel  = document.getElementById('sim-panel');
+  const W = panel.clientWidth, H = panel.clientHeight - 34;
+  renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setSize(W, H);
+  renderer.shadowMap.enabled = true;
+  renderer.setClearColor(0x0d1117);
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x0d1117, 80, 200);
+  camera = new THREE.PerspectiveCamera(72, W/H, 0.1, 500);
+
+  scene.add(new THREE.AmbientLight(0x334455, 1.0));
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.2);
+  sun.position.set(30,60,20); sun.castShadow = true; scene.add(sun);
+
+  groundMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(500,500),
+    new THREE.MeshLambertMaterial({color:0x2a3a2a}));
+  groundMesh.rotation.x = -Math.PI/2;
+  groundMesh.receiveShadow = true;
+  scene.add(groundMesh);
+  scene.add(new THREE.GridHelper(500,100,0x334433,0x223322));
+
+  // Car
+  carGroup = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.6,0.7,3.2),
+    new THREE.MeshLambertMaterial({color:0x1155cc}));
+  body.position.y = 0.35; body.castShadow = true; carGroup.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.6,1.6),
+    new THREE.MeshLambertMaterial({color:0x0033aa}));
+  cabin.position.set(0,0.95,-0.2); carGroup.add(cabin);
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.3,0.2,0.4),
+    new THREE.MeshLambertMaterial({color:0x00ccff}));
+  nose.position.set(0,0.35,1.8); carGroup.add(nose);
+  [-0.55,0.55].forEach(x => {
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(0.25,0.2,0.1),
+      new THREE.MeshLambertMaterial({color:0xffffcc,emissive:0xffffcc}));
+    hl.position.set(x,0.35,1.65); carGroup.add(hl);
+  });
+  const wGeo = new THREE.CylinderGeometry(0.35,0.35,0.25,16);
+  const wMat = new THREE.MeshLambertMaterial({color:0x111111});
+  [[-0.9,1.1],[0.9,1.1],[-0.9,-1.1],[0.9,-1.1]].forEach(([x,z]) => {
+    const w = new THREE.Mesh(wGeo,wMat);
+    w.rotation.z = Math.PI/2; w.position.set(x,0,z); carGroup.add(w);
+  });
+  scene.add(carGroup);
+
+  pathLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([]),
+    new THREE.LineBasicMaterial({color:0x00ff88,linewidth:2}));
+  scene.add(pathLine);
+
+  window.addEventListener('resize', () => {
+    const W2 = panel.clientWidth, H2 = panel.clientHeight - 34;
+    renderer.setSize(W2,H2); camera.aspect = W2/H2; camera.updateProjectionMatrix();
+  });
+  animate();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  updateCarMovement();
+  updateCamera();
+  renderer.render(scene,camera);
+}
+
+function updateCamera() {
+  const behind = new THREE.Vector3(0,2.5,-7);
+  behind.applyEuler(new THREE.Euler(0,carGroup.rotation.y,0));
+  camera.position.copy(carGroup.position).add(behind);
+  camera.lookAt(carGroup.position.clone().add(new THREE.Vector3(
+    Math.sin(carGroup.rotation.y)*15,1.5,Math.cos(carGroup.rotation.y)*15)));
+}
+
+const SPEED_BASE = 0.12, TURN_SPEED = 0.035;
+
+function updateCarMovement() {
+  const speed = (S.rover.speed/5) * SPEED_BASE;
+  if (S.rover.mode === 'manual') {
+    if (S.keys['ArrowUp']   ||S.keys['w']) moveCar(speed);
+    if (S.keys['ArrowDown'] ||S.keys['s']) moveCar(-speed*0.7);
+    if (S.keys['ArrowLeft'] ||S.keys['a']) carGroup.rotation.y += TURN_SPEED;
+    if (S.keys['ArrowRight']||S.keys['d']) carGroup.rotation.y -= TURN_SPEED;
+  } else if (S.rover.mode==='auto')    followPath(speed);
+  else if (S.rover.mode==='explore') exploreMode(speed);
+
+  const gps = sceneToGPS(carGroup.position.x, carGroup.position.z);
+  S.rover.lat     = gps.lat;
+  S.rover.lng     = gps.lng;
+  S.rover.heading = (carGroup.rotation.y * 180/Math.PI + 360) % 360;
+}
+
+function moveCar(speed) {
+  const dir  = new THREE.Vector3(Math.sin(carGroup.rotation.y),0,Math.cos(carGroup.rotation.y));
+  const next = carGroup.position.clone().addScaledVector(dir, speed);
+  if (!checkCollision(next)) { carGroup.position.copy(next); return true; }
+  return false;
+}
+
+function checkCollision(pos) {
+  for (const [id, mesh] of Object.entries(simObstacles)) {
+    const obj = S.objects[id]; if (!obj) continue;
+    if (pos.distanceTo(mesh.position) < (obj.radius||2.0) + 1.2) return true;
+  }
+  return false;
+}
+
+function followPath(speed) {
+  if (!S.path.length || S.pathIdx >= S.path.length) return;
+  const wp = S.path[S.pathIdx];
+  const sc = gpsToScene(wp.lat, wp.lng);
+  const target = new THREE.Vector3(sc.x,0,sc.z);
+  if (carGroup.position.distanceTo(target) < 2.0) {
+    S.pathIdx++;
+    if (S.pathIdx >= S.path.length) {
+      document.getElementById('path-info').textContent = '✅ Rescue complete';
+      setMode('manual');
+    }
+    return;
+  }
+  const dir   = new THREE.Vector3().subVectors(target,carGroup.position).normalize();
+  const angle = Math.atan2(dir.x,dir.z);
+  let diff    = angle - carGroup.rotation.y;
+  while(diff > Math.PI)  diff -= 2*Math.PI;
+  while(diff < -Math.PI) diff += 2*Math.PI;
+  carGroup.rotation.y += Math.sign(diff)*Math.min(TURN_SPEED*2,Math.abs(diff));
+  if (Math.abs(diff) < 0.4 && !moveCar(speed*1.2)) {
+    document.getElementById('path-info').textContent = '⚠️ Obstacle — recalculating...';
+    recalculatePath();
+  }
+}
+
+function exploreMode(speed) {
+  S.exploreTimer++;
+  if (S.exploreTimer > 90) {
+    carGroup.rotation.y += (Math.random()-0.5)*Math.PI*0.8;
+    S.exploreDir = Math.random()>0.5?1:-1; S.exploreTimer = 0;
+  }
+  if (!moveCar(speed*0.7)) { carGroup.rotation.y += S.exploreDir*0.15; S.exploreTimer=80; }
+}
+
+// 3D object configs
+const OBJ_CFG = {
+  debris:    {color:0x886633,scale:[2.5,1.0,2.0]},
+  hole:      {color:0x221133,scale:[2.0,0.1,2.0]},
+  bump:      {color:0x445566,scale:[2.0,0.8,2.0]},
+  victim:    {color:0xffcc00,scale:[0.5,1.8,0.5]},
+  checkpoint:{color:0x00cc88,scale:[0.3,2.0,0.3]},
+};
+
+function addObject3D(obj) {
+  if (!scene) return;
+  const cfg = OBJ_CFG[obj.type]||OBJ_CFG.debris;
+  const sc  = gpsToScene(obj.lat, obj.lng);
+  if (obj.type === 'victim') {
+    const g   = new THREE.Group();
+    const mat = new THREE.MeshLambertMaterial({color:cfg.color});
+    const bod = new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.25,1.2,12),mat);
+    bod.position.y=0.6; bod.castShadow=true; g.add(bod);
+    const hd  = new THREE.Mesh(new THREE.SphereGeometry(0.3,12,12),mat);
+    hd.position.y=1.5; hd.castShadow=true; g.add(hd);
+    g.add(makeSprite(obj.label||'VICTIM'));
+    g.position.set(sc.x,0,sc.z);
+    simVictims[obj.id]=g; scene.add(g); return;
+  }
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(...cfg.scale),
+    new THREE.MeshLambertMaterial({color:cfg.color}));
+  mesh.position.set(sc.x,cfg.scale[1]/2,sc.z); mesh.castShadow=true;
+  if (obj.type==='checkpoint') mesh.add(makeSprite(obj.label||'POINT'));
+  simObstacles[obj.id]=mesh; scene.add(mesh);
+}
+
+function removeObject3D(id) {
+  const m = simObstacles[id]||simVictims[id];
+  if (m) scene.remove(m);
+  delete simObstacles[id]; delete simVictims[id];
+}
+
+function makeSprite(text) {
+  const c=document.createElement('canvas'); c.width=256; c.height=64;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,256,64);
+  ctx.fillStyle='#ffcc00'; ctx.font='bold 26px Arial'; ctx.textAlign='center';
+  ctx.fillText(text,128,42);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true}));
+  sp.scale.set(2,0.5,1); sp.position.y=2.5; return sp;
+}
+
+function updatePathLine() {
+  if (!scene) return;
+  pathLine.geometry.setFromPoints(
+    S.path.length ? S.path.map(wp=>{const s=gpsToScene(wp.lat,wp.lng);
+      return new THREE.Vector3(s.x,0.2,s.z);}) : []);
+}
+
+function resetCar() { if(carGroup){carGroup.position.set(0,0,0);carGroup.rotation.y=0;S.pathIdx=0;} }
+function toggleWireframe() {
+  S.wireframe=!S.wireframe;
+  scene.traverse(o=>{if(o.isMesh&&o!==groundMesh) o.material.wireframe=S.wireframe;});
+}
+
+// ════════════════════════════════
+// CAMERA PREVIEW + BOUNDING BOXES
+// ════════════════════════════════
+let videoStream=null, scanCanvas=null, scanCtx=null;
+const camVideo  = () => document.getElementById('cam-video');
+const camCanvas = () => document.getElementById('cam-canvas');
+
+async function initCamera() {
+  scanCanvas = document.createElement('canvas');
+  scanCtx    = scanCanvas.getContext('2d');
+  try {
+    videoStream = await navigator.mediaDevices.getUserMedia({
+      video:{ width:{ideal:640}, height:{ideal:480}, facingMode:'environment' }
+    });
+    const vid = camVideo();
+    vid.srcObject = videoStream;
+    await vid.play();
+    document.getElementById('cam-status').textContent = '✅ Camera live — AI scanning every 3.5s';
+    // Start drawing bounding boxes on overlay canvas
+    drawBoxLoop();
+    console.log('📷 Camera ready');
+  } catch(e) {
+    document.getElementById('cam-status').textContent = '❌ Camera unavailable: ' + e.message;
+    document.getElementById('ai-scan').checked  = false;
+    document.getElementById('ai-scan').disabled = true;
+    console.warn('Camera error:', e.message);
+  }
+}
+
+// Draw overlay boxes on camera canvas every animation frame
+function drawBoxLoop() {
+  const vid = camVideo();
+  const cvs = camCanvas();
+  if (!cvs || !vid) return;
+  cvs.width  = cvs.offsetWidth  || 280;
+  cvs.height = cvs.offsetHeight || 210;
+  const ctx = cvs.getContext('2d');
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+
+  // Scale factor: API sends 640x480, display is cvs.width x cvs.height
+  const scaleX = cvs.width  / 640;
+  const scaleY = cvs.height / 480;
+
+  const BOX_COLORS = {
+    CRITICAL:'#ff4444', HIGH:'#ff8800', MODERATE:'#ffee00', LOW:'#00cc66',
+    fire:'#ff3300', smoke:'#9966cc', flame:'#ff2200',
+    standing:'#cccc00', lying_down:'#0066ff', collapsed:'#cc0000', waving:'#ffcc00',
+  };
+
+  const boxes = S.lastBoxes;
+  boxes.forEach(b => {
+    if (!b.box) return;
+    const x1 = b.box.xmin * scaleX, y1 = b.box.ymin * scaleY;
+    const x2 = b.box.xmax * scaleX, y2 = b.box.ymax * scaleY;
+    const col = BOX_COLORS[b.priority_rank] || BOX_COLORS[b.class] || '#00d4ff';
+    ctx.strokeStyle = col; ctx.lineWidth = 2;
+    ctx.strokeRect(x1, y1, x2-x1, y2-y1);
+    // Label background
+    const label = `${b.class||'?'} ${((b.confidence||0)*100).toFixed(0)}%`;
+    ctx.font = '11px monospace';
+    const tw  = ctx.measureText(label).width;
+    ctx.fillStyle = col + 'cc';
+    ctx.fillRect(x1, y1-16, tw+6, 16);
+    ctx.fillStyle = '#000';
+    ctx.fillText(label, x1+3, y1-3);
+    // Source tag
+    if (b.source && b.source !== 'local_victim_yolo') {
+      ctx.fillStyle = '#ffffff88';
+      ctx.font = '9px monospace';
+      ctx.fillText(`[${b.source.replace('local_','').replace('_yolo','')}]`, x1, y2+10);
+    }
+  });
+
+  requestAnimationFrame(drawBoxLoop);
+}
+
+async function captureAndAnalyze() {
+  if (!document.getElementById('ai-scan').checked) return;
+  if (!videoStream) return;
+
+  // Capture frame from live video
+  const vid = camVideo();
+  if (!vid || vid.readyState < 2) return;
+
+  scanCanvas.width  = 640;
+  scanCanvas.height = 480;
+  scanCtx.drawImage(vid, 0, 0, 640, 480);
+  const b64 = scanCanvas.toDataURL('image/jpeg', 0.85);
+
+  document.getElementById('cam-status').textContent = '⏳ Analyzing...';
+
+  try {
+    const res = await fetch('/api/analyze', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        frame: b64,
+        lat:   S.rover.lat,
+        lng:   S.rover.lng,
+      }),
+    });
+    const data = await res.json();
+    if (!data.error) {
+      updateUI(data);
+      // Update bounding boxes for canvas overlay
+      S.lastBoxes = [
+        ...(data.detections  || []),
+        ...(data.fire_smoke  || []),
+        ...(data.posture     || []),
+        ...Object.values(data.roboflow||{}).flat(),
+      ];
+      // Also show annotated frame from backend if available
+      if (data.annotated_frame) {
+        // Optionally show full annotated frame in a brief flash
+        // (we use the canvas overlay instead for live feel)
+      }
+      document.getElementById('cam-status').textContent =
+        `✅ ${data.total_time_ms}ms | Groq:${data.groq_accuracy||'—'}/10 | `+
+        `Victims:${data.triage_summary?.total||0} | Fire:${data.fire_smoke?.length||0}`;
+    } else {
+      document.getElementById('cam-status').textContent = `⚠️ ${data.error}`;
+    }
+  } catch(e) {
+    document.getElementById('cam-status').textContent = `❌ ${e.message}`;
+  }
+}
+
+function toggleCamPip() {
+  S.camActive = !S.camActive;
+  document.getElementById('cam-pip').classList.toggle('hidden', !S.camActive);
+  document.getElementById('cam-toggle-btn').textContent =
+    S.camActive ? '📷 Camera ON' : '📷 Camera OFF';
+}
+
+// ════════════════════════════════
+// LEAFLET MAP
+// ════════════════════════════════
+let leafletMap, roverMarker, pathPolyline;
+const leafletMarkers = {};
+const MICONS = {
+  debris:{icon:'🪨'}, hole:{icon:'🕳'}, bump:{icon:'⛰'},
+  victim:{icon:'🧍'}, checkpoint:{icon:'📍'},
+};
+
+function initMap(lat, lng) {
+  if (leafletMap) return;
+  leafletMap = L.map('leaflet-map').setView([lat,lng],17);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {attribution:'© OpenStreetMap',maxZoom:20}).addTo(leafletMap);
+  roverMarker = L.marker([lat,lng], {icon:L.divIcon({
+    html:`<div style="width:14px;height:14px;background:#00d4ff;border-radius:50%;
+          border:2px solid #fff;box-shadow:0 0 8px #00d4ff"></div>`,
+    iconSize:[14,14],iconAnchor:[7,7],className:'',
+  })}).addTo(leafletMap).bindPopup('🤖 Rover');
+  pathPolyline = L.polyline([],{color:'#00ff88',weight:3,dashArray:'6 4'}).addTo(leafletMap);
+  leafletMap.on('click', e => placeObject(e.latlng.lat, e.latlng.lng));
+}
+
+function placeObject(lat, lng) {
+  const type=S.tool, id='obj_'+Date.now().toString(36);
+  const obj={id,type,lat,lng,radius:2.0,label:type.toUpperCase()};
+  S.objects[id]=obj;
+  addObject3D(obj);
+  const marker = L.marker([lat,lng],{icon:L.divIcon({
+    html:`<div style="font-size:20px">${MICONS[type]?.icon||'📌'}</div>`,
+    iconSize:[24,24],iconAnchor:[12,12],className:'',
+  })}).addTo(leafletMap).bindPopup(
+    `<b>${MICONS[type]?.icon||''} ${type}</b><br>
+     <small>${lat.toFixed(5)}, ${lng.toFixed(5)}</small><br>
+     <button onclick="removeObject('${id}')"
+       style="margin-top:4px;padding:2px 6px;cursor:pointer;border-radius:3px">
+       🗑 Remove</button>`);
+  leafletMarkers[id]=marker;
+  fetch('/api/objects',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(obj)}).catch(()=>{});
+  document.getElementById('status-line').textContent=`Added ${type} @ ${lat.toFixed(4)},${lng.toFixed(4)}`;
+}
+
+function removeObject(id) {
+  removeObject3D(id); delete S.objects[id];
+  if (leafletMarkers[id]) { leafletMap.removeLayer(leafletMarkers[id]); delete leafletMarkers[id]; }
+  fetch(`/api/objects/${id}`,{method:'DELETE'}).catch(()=>{});
+}
+
+function clearAllObjects() {
+  Object.keys(S.objects).forEach(removeObject);
+  fetch('/api/objects/clear',{method:'POST'}).catch(()=>{});
+  S.path=[]; S.pathIdx=0;
+  if(pathPolyline) pathPolyline.setLatLngs([]);
+  if(pathLine)     pathLine.geometry.setFromPoints([]);
+}
+
+function updateMapRover() {
+  if (roverMarker && S.rover.lat) roverMarker.setLatLng([S.rover.lat,S.rover.lng]);
+}
+
+function updateMapPath(pts) {
+  if (pathPolyline) pathPolyline.setLatLngs(pts.map(p=>[p.lat,p.lng]));
+}
+
+// ════════════════════════════════
+// CONTROLS
+// ════════════════════════════════
+document.addEventListener('keydown', e => {
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+  S.keys[e.key]=true;
+});
+document.addEventListener('keyup', e => { S.keys[e.key]=false; });
+function pressKey(k)   { S.keys[k]=true; }
+function releaseKey(k) { S.keys[k]=false; }
+function stopCar()     { Object.keys(S.keys).forEach(k=>delete S.keys[k]); }
+
+function setMode(mode) {
+  S.rover.mode=mode;
+  ['manual','auto','explore'].forEach(m =>
+    document.getElementById(`mode-${m}`)?.classList.toggle('active',m===mode));
+  fetch('/api/state',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mode})}).catch(()=>{});
+  if (mode==='auto' && S.path.length) {
+    S.pathIdx=0;
+    document.getElementById('path-info').textContent=`🚗 Following ${S.path.length} waypoints`;
+  }
+}
+
+function setSpeed(v) { S.rover.speed=parseInt(v); document.getElementById('speed-val').textContent=v; }
+function setTool(t) {
+  S.tool=t;
+  document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById(`tool-${t}`)?.classList.add('active');
+  document.getElementById('status-line').textContent=`Tool: ${t}`;
+}
+
+async function startRescue() {
+  const targets=Object.values(S.objects).filter(o=>o.type==='victim'||o.type==='checkpoint');
+  if (!targets.length) { alert('Place victim 🧍 or checkpoint 📍 markers first.'); return; }
+  document.getElementById('path-info').textContent='⏳ Planning route...';
+  try {
+    const res=await fetch('/api/pathplan',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        start:{lat:S.rover.lat,lng:S.rover.lng},
+        targets,
+        obstacles:Object.values(S.objects).filter(o=>['debris','hole','bump'].includes(o.type)),
+      })});
+    const data=await res.json();
+    if (data.error) { document.getElementById('path-info').textContent=`❌ ${data.error}`; return; }
+    S.path=data.path; S.pathIdx=0;
+    updatePathLine(); updateMapPath(data.path);
+    const km=(data.total_distance/1000).toFixed(3);
+    document.getElementById('path-info').textContent=
+      `✅ ${data.path.length} waypoints | ${km}km | ${data.visit_order.length} targets`+
+      (data.blocked_targets?.length ? ` | ⚠️${data.blocked_targets.length} blocked`:'');
+    setMode('auto');
+  } catch(e) { document.getElementById('path-info').textContent=`❌ ${e.message}`; }
+}
+
+async function recalculatePath() {
+  const targets=Object.values(S.objects).filter(o=>o.type==='victim'||o.type==='checkpoint');
+  if (!targets.length) return;
+  try {
+    const res=await fetch('/api/pathplan',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        start:{lat:S.rover.lat,lng:S.rover.lng},
+        targets,
+        obstacles:Object.values(S.objects).filter(o=>['debris','hole','bump'].includes(o.type)),
+      })});
+    const data=await res.json();
+    if (!data.error && data.path.length) {
+      S.path=data.path; S.pathIdx=0; updatePathLine(); updateMapPath(data.path);
+      document.getElementById('path-info').textContent='🔄 Path recalculated';
+    }
+  } catch(e) {}
+}
+
+// ════════════════════════════════
+// UI UPDATES
+// ════════════════════════════════
+const ZONE_CLASS = {red:'badge-danger',orange:'badge-warn',yellow:'badge-warn',green:'badge-ok'};
+
+function updateUI(result) {
+  S.lastResult = result;
+  const zone = result.zone_color||'green';
+
+  // Zone badge
+  const zb = document.getElementById('zone-badge');
+  zb.textContent = `ZONE: ${zone.toUpperCase()}`;
+  zb.className   = `badge ${ZONE_CLASS[zone]||'badge-ok'}`;
+
+  // Groq score
+  if (result.groq_accuracy != null) {
+    const gs = document.getElementById('groq-score');
+    gs.style.display = 'inline';
+    gs.textContent   = `GROQ:${result.groq_accuracy}/10`;
+    gs.className     = `badge ${result.groq_accuracy>=7?'badge-ok':'badge-warn'}`;
+  }
+
+  // Fire badge
+  const fb = document.getElementById('fire-badge');
+  fb.style.display = result.fire_smoke?.length ? 'inline' : 'none';
+
+  // Text
+  if (result.groq_summary)
+    document.getElementById('groq-summary').textContent=`"${result.groq_summary}"`;
+  if (result.critical_findings)
+    document.getElementById('critical-findings').textContent=`⚠️ ${result.critical_findings}`;
+  document.getElementById('scan-info').textContent=
+    `⏱${result.total_time_ms}ms | overrides:${result.groq_overrides||0}`;
+
+  // Detections panel
+  const list = document.getElementById('det-list');
+  let html = '';
+
+  // Victims
+  const dets = result.detections||[];
+  if (dets.length) {
+    html += `<div class="det-section">👥 VICTIMS (${dets.length})</div>`;
+    html += dets.map(d=>`
+      <div class="det-item">
+        <span class="det-rank rank-${d.priority_rank||'LOW'}">${d.priority_rank||'-'}</span>
+        <span style="font-weight:600">${d.class||'?'}</span>
+        <span style="color:var(--muted)">${((d.confidence||0)*100).toFixed(0)}%</span>
+        ${d.groq_action==='OVERRIDDEN'?'<span style="color:#ffaa00;font-size:9px">[G↑]</span>':''}
+        <span class="det-src">${d.source||''}</span>
+      </div>`).join('');
+  }
+
+  // Fire & smoke
+  const fire = result.fire_smoke||[];
+  if (fire.length) {
+    html += `<div class="det-section">🔥 FIRE/SMOKE (${fire.length})</div>`;
+    html += fire.map(d=>`
+      <div class="det-item">
+        <span style="color:#ff4400;font-weight:700">${d.class||'?'}</span>
+        <span style="color:var(--muted)">${((d.confidence||0)*100).toFixed(0)}%</span>
+        <span class="det-src">${d.source||''}</span>
+      </div>`).join('');
+  }
+
+  // Posture
+  const posture = result.posture||[];
+  if (posture.length) {
+    html += `<div class="det-section">🧍 POSTURE (${posture.length})</div>`;
+    html += posture.map(d=>`
+      <div class="det-item">
+        <span style="color:${d.risk_score>=0.7?'#ff4444':d.risk_score>=0.4?'#ffaa00':'#00cc66'};font-weight:600">${d.class}</span>
+        <span style="color:var(--muted)">risk:${(d.risk_score||0).toFixed(2)}</span>
+      </div>`).join('');
+  }
+
+  // Roboflow
+  const rf = result.roboflow||{};
+  const rfAll = Object.entries(rf).filter(([,v])=>v.length);
+  if (rfAll.length) {
+    html += `<div class="det-section">📡 ROBOFLOW</div>`;
+    rfAll.forEach(([key,dets])=>{
+      html += dets.map(d=>`
+        <div class="det-item">
+          <span style="color:#00d4ff;font-weight:600">[${key}]</span>
+          <span>${d.class}</span>
+          <span style="color:var(--muted)">${((d.confidence||0)*100).toFixed(0)}%</span>
+        </div>`).join('');
+    });
+  }
+
+  list.innerHTML = html || '<span style="color:var(--muted)">No detections</span>';
+}
+
+// ════════════════════════════════
+// MAIN LOOP
+// ════════════════════════════════
+let _lastSync=0;
+function mainLoop() {
+  updateMapRover();
+  const now=Date.now();
+  // Push simulated GPS to server every 2s
+  if (now-_lastSync>2000 && S.rover.lat) {
+    _lastSync=now;
+    fetch('/api/state',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lat:S.rover.lat,lng:S.rover.lng,heading:S.rover.heading})
+    }).catch(()=>{});
+    document.getElementById('gps-display').textContent=
+      `SIM ${S.rover.lat.toFixed(5)},${S.rover.lng.toFixed(5)} | ${S.rover.heading.toFixed(0)}°`;
+  }
+  // AI scan
+  if (now-S.lastScanTime>S.scanInterval) {
+    S.lastScanTime=now;
+    captureAndAnalyze();
+  }
+  requestAnimationFrame(mainLoop);
+}
+
+// ════════════════════════════════
+// HEALTH CHECK
+// ════════════════════════════════
+async function checkHealth() {
+  try {
+    const data = await fetch('/api/health').then(r=>r.json());
+    const ok   = !data.hf_api?.error;
+    const b    = document.getElementById('hf-status');
+    b.textContent = ok?'HF:ONLINE':'HF:OFFLINE';
+    b.className   = `badge ${ok?'badge-ok':'badge-danger'}`;
+    // Show local model status
+    const lm = data.local_models||{};
+    const loaded = Object.keys(lm).join(',') || 'none';
+    document.getElementById('status-line').textContent=`Local models: ${loaded}`;
+  } catch(e) {
+    document.getElementById('hf-status').textContent='HF:ERROR';
+    document.getElementById('hf-status').className='badge badge-danger';
+  }
+}
+
+// ════════════════════════════════
+// INIT
+// ════════════════════════════════
+window.addEventListener('load', async () => {
+  initGPS();
+  initThree();
+  initMap(S.gps.origin.lat, S.gps.origin.lng);
+  await initCamera();
+  checkHealth();
+  setInterval(checkHealth, 30000);
+  mainLoop();
+  document.getElementById('status-line').textContent='Dashboard ready — click map to place objects';
+});
+</script>
+</body>
+</html>
